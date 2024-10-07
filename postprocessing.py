@@ -1,8 +1,11 @@
 # main.py
+from dgnsscp.dgnsscp import DGNSSCP
+from models import LatLonAltCoord
+from rtcm_storage import read_file, count_rtcm_messages_by_id
+from timestamps import timestamp_to_unix_millis, find_closest_timestamp
 
-from rtcm_storage import read_file, timestamp_to_unix, find_closest_timestamp
 
-file_path = "data.txt"
+file_path = "timestamp.txt"
 
 # Reading RTCM messages from the file (including decoding)
 data_table = read_file(file_path)
@@ -13,9 +16,12 @@ for entry in data_table:
     print(f"Raw RTCM Message: {entry['message']}")
     print("-" * 40)
 
-# Example: Find the closest timestamp to a given one
-target_timestamp = timestamp_to_unix("2024-09-24T17:50:00.000000")
-closest_entry = find_closest_timestamp(target_timestamp, data_table)
+test = count_rtcm_messages_by_id(data_table)
+print(test)
 
+#print("Starting PRC correction")
+#dgnsscp = DGNSSCP(fixed_base_coords=LatLonAltCoord(lat=10, alt=10, lon=10))
+#dgnsscp.process_messages(data_table)
+#print(dgnsscp.prcs_history)
 # Output the closest entry
-print(f"Closest timestamp entry: {closest_entry}")
+#print(f"Closest timestamp entry: {closest_entry}")

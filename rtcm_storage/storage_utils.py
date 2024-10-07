@@ -1,6 +1,7 @@
 # storage_utils.py
-from rtcm_storage import timestamp_to_unix
-from rtcm_storage.processing_utils import decode_rtcm_message
+import binascii
+from .processing_utils import decode_rtcm_message
+from timestamps import timestamp_to_unix_millis
 
 
 def read_file(file_path):
@@ -10,13 +11,16 @@ def read_file(file_path):
     table = []
     with open(file_path, 'r') as file:
         for line in file:
-            timestamp_str, message = line.strip().split(';')
-            unix_timestamp = timestamp_to_unix(timestamp_str)
-            decoded_message = decode_rtcm_message(message)
+            timestamp_str, message_hex = line.strip().split(';')
+            byte_message = binascii.unhexlify(message_hex)
+            unix_timestamp = timestamp_to_unix_millis(timestamp_str)
+
+            message_id, decoded_message = decode_rtcm_message(byte_message)
             table.append({
                 "timestamp_unix": unix_timestamp,
-                "message": message,
-                "decoded_message": decoded_message
+                "byte_message": byte_message,
+                "message_id": message_id,
+                "message": decoded_message
             })
     return table
 
