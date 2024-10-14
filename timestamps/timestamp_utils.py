@@ -17,3 +17,6 @@ def find_closest_timestamp(target_timestamp, table):
     The search is going to be indexed by the 'timestamp_unix' column
     """
     return min(table, key=lambda x: abs(x['timestamp_unix'] - target_timestamp))
+
+def unix_timestamp_millis_to_datetime(unix_timestamp_millis):
+    return datetime.fromtimestamp(unix_timestamp_millis / 1000)

@@ -1,8 +1,10 @@
 import math
-
-from dgnsscp.coordinate_transformations import calculate_enu_from_geodetic_ecef, ecef_to_geodetic, geodetic_to_ecef, \
-    calculate_ecef_satellite_vector
-from dgnsscp.dgnsscp_utils import retrieve_ephemeris, calculate_ecef_satellite_position, calculate_azimuth_elevation
+import random
+from datetime import datetime
+from timestamps import unix_timestamp_millis_to_datetime, find_closest_timestamp
+import gps
+import numpy as np
+from dgnsscp.coordinate_transformations import geodetic_to_ecef, ecef_satelite
 from models import LatLonAltCoord, AzElCoord
 
 
@@ -10,11 +12,11 @@ class DGNSSCP:
     def __init__(self, fixed_base_coords: LatLonAltCoord):
         self.fixed_base_coords = fixed_base_coords
         self.prcs_history = []  # Array of objects { timestamp_unix, prcs }
-
+        self.observed_base_pseudoranges_history_list = []
 
     def process_messages(self, messages):
-        np_fixed_base_coord = self.fixed_base_coords.to_numpy()
-        satellites_az_ez = {}
+        visited = False
+        az_el_dict = {}
 
         for message in messages:
             try:
@@ -22,77 +24,132 @@ class DGNSSCP:
                 rtcm_message = message["message"]
 
                 if rtcm_message:
-                    if rtcm_message.identity == '1019':
-                        satellite_id = rtcm_message.DF009
-                        ephemeris = retrieve_ephemeris(rtcm_message)
-
-                        np_satellite_ecef = calculate_ecef_satellite_position(ephemeris)
-
-                        enu = calculate_enu_from_geodetic_ecef(np_fixed_base_coord, np_satellite_ecef)
-                        azimuth, elevation = calculate_azimuth_elevation(enu)
-
-                        satellites_az_ez[satellite_id] = AzElCoord(azimuth, elevation)
-
-                        print(f"azimuth: {azimuth}, elevation: {elevation}")
-
+                    # Message type for base station position,
+                    # From this messages the az/el can be calculated
                     if rtcm_message.identity == '1005' or rtcm_message.identity == '1006':
-                        x = rtcm_message.DF025 * 0.0001
-                        y = rtcm_message.DF026 * 0.0001
-                        z = rtcm_message.DF027 * 0.0001
+                        if visited:
+                            continue
+                        else:
+                            visited = True
+                        x = rtcm_message.DF025
+                        y = rtcm_message.DF026
+                        z = rtcm_message.DF027
+                        print(x,y,z)
+                        datetime_timestamp = unix_timestamp_millis_to_datetime(timestamp)
+                        navfile = "/Users/hernancardoso/pydgnsscp/gps/brdc2680.24n"
+                        az_el_dict = gps.calculate_az_el_dict(receiver_pos_llh=(x, y, z), obs_time= datetime_timestamp, navfile = navfile)
 
-                        lat, lon, alt = ecef_to_geodetic(x, y, z)
-
-                        observed_base_coords = LatLonAltCoord(lat, lon, alt)
-
+                    if rtcm_message.identity == '1004': #PRC Received from satellite
+                        # save the PRN and pseudorange in a dict
                         prcs = {}
 
-                        for prn, az_el in satellites_az_ez.items():  # used for the fix
-                            prc = generate_prc_for_satellite(observed_base_coords, self.fixed_base_coords, az_el.azimuth, az_el.elevation, 0)
-                            print("El PRC es :", prc)
-                            prcs[prn] = prc
+                        # Assuming there are up to 32 satellites in this message (based on the field names you provided)
+                        for i in range(1, 32):  # Loop through DF009_01 to DF009_09 for PRNs
+                            # Construct the field names dynamically
+                            prn_field = f'DF009_0{i}'
+                            pseudorange_field = f'DF011_0{i}'
 
-                        row = {
-                            "timestamp_unix": timestamp,
-                            "prcs": prcs
-                        }
-                        self.prcs_history.append(row)
-                        print(f"Latitude: {lat}, Longitude: {lon}, Altitude: {alt}")
-                    # else:
-                    #    print("Message does not contain ECEF coordinates.")
+                            # Extract the satellite PRN and pseudorange (assuming DF011 is the pseudorange field)
+                            try:
+                                prn = getattr(rtcm_message, prn_field)
+                                pseudorange = getattr(rtcm_message, pseudorange_field)
+
+                                (az, el) = az_el_dict[prn]
+
+                                correction = generate_prc_for_satellite(pseudorange, self.fixed_base_coords, az, el)
+                                # Save the PRN and pseudorange in the dictionary
+                                prcs[prn] = correction
+                            except:
+                                break
+
+                        self.observed_base_pseudoranges_history_list.append({
+                            'timestamp_unix': timestamp,
+                            'prcs': prcs
+                        })
                 else:
                     print("Failed to parse RTK message.")
             except Exception as e:
                 print(f"Error parsing RTK message: {e}")
 
+        return self.observed_base_pseudoranges_history_list
 
-def generate_prc_for_satellite(observed_gga: LatLonAltCoord, base_coord: LatLonAltCoord, sat_acimut, sat_elevacion,
+    def correction_projection(self, reports):
+        parsed_reports = reports
+        x_fixed, y_fixed, z_r = geodetic_to_ecef(lat = self.fixed_base_coords.lat, lon = self.fixed_base_coords.lon, alt = self.fixed_base_coords.alt)
+
+        for report in reports:
+            arr_nodo = []
+
+            number_of_satellites_used = len(report["sat"])
+            timestamp = report["timestamp_unix"]
+
+            lat = report["la"]
+            lon = report["lo"]
+            alt = report["alt"]
+            x_medido, y_medido, z_medido = geodetic_to_ecef(lat, lon, alt)
+            data = find_closest_timestamp(timestamp, self.observed_base_pseudoranges_history_list)
+            for prn in report["sat"]:
+                az, el = report["sat"][prn]
+                x_sat, y_sat, z_sat = ecef_satelite(az, el, lat,lon,alt)
+                p_observado = math.sqrt(( x_sat-x_medido)**2 + (y_sat-y_medido)**2 + (z_sat-z_medido)**2 )
+                p_corregido = p_observado +  data["prcs"][prn] - random.randint(10000, 1000000)
+                arr_nodo.append(( x_sat, y_sat, z_sat, p_corregido))
+
+            x_mod, y_mod, z_mod = geodetic_to_ecef(lat, lon, alt)
+            # Suponemos que el DeltaTau = 0 en el comienzo.
+            tau_mod = 0
+            H = np.zeros((number_of_satellites_used, 4))
+            DeltaP = np.zeros(number_of_satellites_used)
+
+            for h in range(20):
+                # En este for armamos la matriz H fila por fila.
+                for j in range(number_of_satellites_used):
+                    x, y, z, pseudorango = arr_nodo[j]
+                    p = math.sqrt(
+                        (x - x_mod) ** 2 + (y - y_mod) ** 2 + (z - z_mod) ** 2) + tau_mod
+                    H[j] = np.array(
+                        [(x_mod - x) / p, (y_mod - y) / p, (z_mod - z) / p, 299792458]) # 299792458 speed light
+
+                    # DeltaP = p_corregido - p_modelado
+                    DeltaP[j] = pseudorango - p
+
+                    # Calcular H^tH
+                HtH = np.dot(H.T, H)
+
+                # Calcular la inversa de H^tH
+                HtH_inv = np.linalg.inv(HtH)
+
+                # Calcular H^tP
+                HtDeltaP = np.dot(H.T, DeltaP)
+
+                # Calcular X
+                DeltaX = np.dot(HtH_inv, HtDeltaP)
+
+                x_mod = x_mod + DeltaX[0]
+                y_mod = y_mod + DeltaX[1]
+                z_mod = z_mod + DeltaX[2]
+                tau_mod = tau_mod + DeltaX[3]
+
+            #return x_mod, y_mod, z_mod, tau_mod
+            report["x_mod"] = x_mod
+            report["y_mod"] = y_mod
+            report["z_mod"] = z_mod
+
+def generate_prc_for_satellite(p_observado, base_coord: LatLonAltCoord, sat_acimut, sat_elevacion,
                                 sat_residuals=0):
-    # def generate_prc_for_satellite(observed_gga: GPGGA, base_station_pos, gsv):
-
-    # Obtengo las coordenadas ECEF en funcion del mensaje NMEA GPGGA.
-    x_medido, y_medido, z_medido = geodetic_to_ecef(observed_gga.lat, observed_gga.lon,
-                                                                    observed_gga.alt)
-
     # Obtengo las coordenadas ECEF en funcion de la latitud, longitud y altitud conocidas de la base station.
     x_conocido, y_conocido, z_conocido = geodetic_to_ecef(base_coord.lat, base_coord.lon,
                                                                           base_coord.alt)
 
     # Obtengo las coordenadas ECEF del satelite i "ideal", usando las coordenadas de la base station
-    x_sat_ideal, y_sat_ideal, z_sat_ideal = calculate_ecef_satellite_vector(base_coord.lat,
-                                                                                            base_coord.lon,
-                                                                                            base_coord.alt, sat_acimut,
-                                                                                            sat_elevacion)
+    x_sat_ideal, y_sat_ideal, z_sat_ideal = ecef_satelite(sat_acimut, sat_elevacion, base_coord.lat, base_coord.lon, base_coord.alt)
 
-    # Obtengo las coordenadas ECEF del satelite i, usando las coordenadas calculadas para la base station
-    x_sat, y_sat, z_sat = calculate_ecef_satellite_vector(observed_gga.lat, observed_gga.lon,
-                                                                          observed_gga.alt, sat_acimut, sat_elevacion)
 
     # Con las ECEF del satelite y las ECEF del receptor puedo calcular el pseudorango ideal y el observado.
 
     p_ideal = math.sqrt(
         (x_sat_ideal - x_conocido) ** 2 + (y_sat_ideal - y_conocido) ** 2 + (z_sat_ideal - z_conocido) ** 2)
 
-    p_observado = math.sqrt((x_sat - x_medido) ** 2 + (y_sat - y_medido) ** 2 + (z_sat - z_medido) ** 2)
 
     # Para aplicar los residuals los sumo al pseudorango observado.
     # Primero tengo que identificar el correcto residual.
@@ -102,3 +159,5 @@ def generate_prc_for_satellite(observed_gga: LatLonAltCoord, base_coord: LatLonA
     prc = p_ideal - p_observado
 
     return prc
+
+
