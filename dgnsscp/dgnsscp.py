@@ -4,7 +4,7 @@ from datetime import datetime
 from timestamps import unix_timestamp_millis_to_datetime, find_closest_timestamp
 import gps
 import numpy as np
-from dgnsscp.coordinate_transformations import geodetic_to_ecef, ecef_satelite
+from dgnsscp.coordinate_transformations import geodetic_to_ecef, ecef_satelite, ecef_to_geodetic
 from models import LatLonAltCoord, AzElCoord
 
 
@@ -91,8 +91,16 @@ class DGNSSCP:
             for prn in report["sat"]:
                 az, el = report["sat"][prn]
                 x_sat, y_sat, z_sat = ecef_satelite(az, el, lat,lon,alt)
+
                 p_observado = math.sqrt(( x_sat-x_medido)**2 + (y_sat-y_medido)**2 + (z_sat-z_medido)**2 )
-                p_corregido = p_observado +  data["prcs"][prn] - random.randint(10000, 1000000)
+
+                p_corregido = p_observado
+
+                try:
+                    #p_corregido = p_corregido + data["prcs"][prn]
+                    p_corregido = data["prcs"][prn]
+                except:
+                    print("No encontro PRN")
                 arr_nodo.append(( x_sat, y_sat, z_sat, p_corregido))
 
             x_mod, y_mod, z_mod = geodetic_to_ecef(lat, lon, alt)
@@ -101,7 +109,7 @@ class DGNSSCP:
             H = np.zeros((number_of_satellites_used, 4))
             DeltaP = np.zeros(number_of_satellites_used)
 
-            for h in range(20):
+            for h in range(3):
                 # En este for armamos la matriz H fila por fila.
                 for j in range(number_of_satellites_used):
                     x, y, z, pseudorango = arr_nodo[j]
@@ -134,6 +142,13 @@ class DGNSSCP:
             report["x_mod"] = x_mod
             report["y_mod"] = y_mod
             report["z_mod"] = z_mod
+            lat_mod, lon_mod, alt_mod= ecef_to_geodetic(x_mod, y_mod, z_mod)
+
+            report["lat_mod"] = lat_mod
+            report["lon_mod"] = lon_mod
+            report["alt_mod"] = alt_mod
+
+
 
 def generate_prc_for_satellite(p_observado, base_coord: LatLonAltCoord, sat_acimut, sat_elevacion,
                                 sat_residuals=0):

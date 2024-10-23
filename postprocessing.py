@@ -24,7 +24,7 @@ dgnsscp = DGNSSCP(fixed_base_coords = fixed_base_geodetic)
 test = dgnsscp.process_messages(data_table)
 
 corrections = dgnsscp.correction_projection(data)
-print("test")
+print("End")
 
 print(count_rtcm_messages_by_id(data_table))
 #print(dgnsscp.prcs_history)
