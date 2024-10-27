@@ -1,3 +1,17 @@
+certifi==2024.8.30
+cftime==1.6.4.post1
+georinex==1.16.2
+hatanaka==2.8.1
+importlib_resources==6.4.5
+ncompress==1.0.2
+netCDF4==1.7.2
 numpy==2.1.2
+packaging==24.1
+pandas==2.2.3
 pymap3d==3.1.0
 pyrtcm==1.1.1
+python-dateutil==2.9.0.post0
+pytz==2024.2
+six==1.16.0
+tzdata==2024.2
+xarray==2024.9.0

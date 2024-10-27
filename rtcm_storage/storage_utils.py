@@ -14,14 +14,18 @@ def read_file(file_path):
             timestamp_str, message_hex = line.strip().split(';')
             byte_message = binascii.unhexlify(message_hex)
             unix_timestamp = timestamp_to_unix_millis(timestamp_str)
+            try: 
+                message_id, decoded_message = decode_rtcm_message(byte_message)
+                table.append({
+                    "timestamp_unix": unix_timestamp,
+                    "byte_message": byte_message,
+                    "message_id": message_id,
+                    "message": decoded_message
+                })
+            except:
+                print("No se pudo validar el mensaje")
+                continue
 
-            message_id, decoded_message = decode_rtcm_message(byte_message)
-            table.append({
-                "timestamp_unix": unix_timestamp,
-                "byte_message": byte_message,
-                "message_id": message_id,
-                "message": decoded_message
-            })
     return table
 
 def save_message(file_path, message, timestamp):

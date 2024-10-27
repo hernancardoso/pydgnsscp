@@ -170,6 +170,37 @@ def calculate_az_el_dict(receiver_pos_llh, obs_time, navfile):
             print(f"{sv}        Calculation Error: {e}")
     return az_el_dict
 
+def calculate_satellite_positions(obs_time, navfile):
+    # Read RINEX navigation file
+    nav = gr.load(navfile)
+    sat_positions = {}
+    # Get list of satellites
+    svs = nav.sv.values
+
+    for sv in svs:
+        try:
+            # Get satellite ephemeris at the closest time
+            sat_data = nav.sel(sv=sv).dropna(dim='time', how='all')
+            times = sat_data.time.values
+
+            # Convert obs_time to numpy.datetime64
+            obs_time_np = np.datetime64(obs_time)
+
+            # Find the closest time index
+            time_deltas = np.abs(times - obs_time_np)
+            idx = np.argmin(time_deltas)
+
+            # Get ephemeris parameters
+            eph = sat_data.isel(time=idx)
+
+            sat_prn = int(sv[1:])
+            sat_positions[sat_prn] = compute_satellite_position(eph, obs_time)
+
+            # print(f"{sv}        {azimuth_deg:14.2f}  {elevation_deg:14.2f}")
+        except Exception as e:
+            print(f"{sv}        Calculation Erssror: {e}")
+    return sat_positions
+
 
 if __name__ == '__main__':
     # Receiver fixed position (latitude, longitude, height in meters)
@@ -180,3 +211,90 @@ if __name__ == '__main__':
     navfile = 'brdc2680.24n'  # Replace with your file name
 
     calculate_az_el_dict(receiver_pos_llh, obs_time, navfile)
+
+
+import numpy as np
+import georinex as gr
+from datetime import datetime
+
+class SatellitePositionCalculator:
+    def __init__(self, navfile):
+        # Read the RINEX navigation file once
+        self.nav = gr.load(navfile)
+        # Preprocess and store satellite data for all PRNs
+        self.satellite_data = self._preprocess_satellite_data()
+
+    def _preprocess_satellite_data(self):
+        """
+        Preprocess satellite data for all satellites and store in a dictionary.
+        This avoids redundant calls to nav.sel(sv=sv).dropna(dim='time', how='all').
+        """
+        satellite_data = {}
+        svs = self.nav.sv.values
+        for sv in svs:
+            try:
+                # Preprocess and store the satellite data
+                sat_data = self.nav.sel(sv=sv).dropna(dim='time', how='all')
+                satellite_data[sv] = sat_data
+            except Exception as e:
+                print(f"{sv} Preprocessing Error: {e}")
+        return satellite_data
+
+    def _get_closest_ephemeris(self, sat_data, obs_time_np):
+        """
+        Find the ephemeris closest to the observation time.
+        """
+        times = sat_data.time.values
+        time_deltas = np.abs(times - obs_time_np)
+        idx = np.argmin(time_deltas)
+        return sat_data.isel(time=idx)
+
+    def calculate_position(self, prn, obs_time):
+        """
+        Calculate the position of a specific satellite based on PRN and observation time.
+        """
+        try:
+            sv = f"G{prn:02}"  # Assuming GPS satellites have prefix 'G'
+            if sv not in self.satellite_data:
+                print(f"PRN {prn} data not available.")
+                return None
+
+            sat_data = self.satellite_data[sv]
+            # Convert obs_time to numpy.datetime64
+            obs_time_np = np.datetime64(obs_time)
+
+            # Get the closest ephemeris
+            eph = self._get_closest_ephemeris(sat_data, obs_time_np)
+
+            # Compute satellite position
+            sat_position = compute_satellite_position(eph, obs_time)
+
+            return sat_position
+        except Exception as e:
+            print(f"PRN {prn} Calculation Error: {e}")
+            return None
+
+    def calculate_all_positions(self, obs_time):
+        """
+        Calculate positions for all available satellites at the given observation time.
+        """
+        sat_positions = {}
+        # Convert obs_time to numpy.datetime64 once outside the loop
+        obs_time_np = np.datetime64(obs_time)
+
+        for sv, sat_data in self.satellite_data.items():
+            try:
+                # Extract PRN (removing prefix)
+                sat_prn = int(sv[1:])
+
+                # Get the closest ephemeris
+                eph = self._get_closest_ephemeris(sat_data, obs_time_np)
+
+                # Compute satellite position
+                sat_position = compute_satellite_position(eph, obs_time)
+
+                # Store the position
+                sat_positions[sat_prn] = sat_position
+            except Exception as e:
+                print(f"{sv} Calculation Error: {e}")
+        return sat_positions
