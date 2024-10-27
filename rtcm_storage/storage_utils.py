@@ -23,7 +23,6 @@ def read_file(file_path):
                     "message": decoded_message
                 })
             except:
-                print("No se pudo validar el mensaje")
                 continue
 
     return table

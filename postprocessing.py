@@ -1,59 +1,39 @@
 # main.py
 from dgnsscp.coordinate_transformations import ecef_to_geodetic
 from dgnsscp.dgnsscp import DGNSSCP
-from models import LatLonAltCoord
 from rtcm_storage import read_file, count_rtcm_messages_by_id
 import ovis_storage
 import folium
 
 
-# Reading RTCM messages from the file (including decoding)
+# Reading RTCM messages from the file (and also decode them)
 data_table = read_file("timestamp.txt")
 
-
+# Reading saved reports of collar
 data = ovis_storage.read_file("reports.json")
 
-(x, y, z) = (2909132.9812000003, -4355451.2094, -3627801.3051) # ECEF coordinates of UYMO
-lat, lon, alt = ecef_to_geodetic(x, y, z)
+# ECEF coordinates of UYMO mountpoint of REGNAROU
+uymo_ecef = (2909132.9812000003, -4355451.2094, -3627801.3051) 
+# Geodetic coordinates of UYMO
+lat, lon, alt = ecef_to_geodetic(*uymo_ecef)
 
-fixed_base_geodetic = LatLonAltCoord(lat, lon, alt)
+# Start DGNSSCP class
+dgnsscp = DGNSSCP(fixed_base_coords = (lat, lon, alt))
 
-dgnsscp = DGNSSCP(fixed_base_coords = fixed_base_geodetic)
-test = dgnsscp.process_messages(data_table)
+# Iterate over RTCM messages generating the pseudo range correction.
+# This step only uses data from the CORS, the idea is to use the UYMO as a rover.
+# 1004 RTCM messages provide the observed pseudorange, and by knowing the exact position of the UYMO base station
+# and the positions of the satellites it is possible to calculate the exact pseudorange, therefore 
+# the substraction of these terms is the pseudo range correction for a particular satellite.
+prcs = dgnsscp.process_messages(data_table)
 
+# Now the rover is the collar, for each fix of the collar lets see which satellites it used, then
+# apply the pseudo range correction to it and then recalculate the position with least square method
 corrections = dgnsscp.correction_projection(data)
-print("End")
 
-print(count_rtcm_messages_by_id(data_table))
-
-latitudes = []
-longitudes = []
-
-latitudes_mod = []
-longitudes_mod = []
-
-for fix in corrections:
-    la, lo = fix['lat'], fix['lon']
-    la_mod, lo_mod = fix['lat_mod'], fix['lon_mod']
-    latitudes.append(la)
-    longitudes.append(lo)
-
-    latitudes_mod.append(la_mod)
-    longitudes_mod.append(lo_mod)
-
-
-# Center the map on a location
-m = folium.Map(location=[40.7128, -74.0060], zoom_start=2)  # Centered on New York for this example
-
-for lat, lon in zip(latitudes, longitudes):
-    folium.Marker(location=[lat, lon], icon=folium.Icon(color='red')).add_to(m)
-
-for lat, lon in zip(latitudes, longitudes):
-    folium.Marker(location=[lat, lon], icon=folium.Icon(color='red')).add_to(m)
-
-for lat, lon in zip(latitudes_mod, longitudes_mod):
-    folium.Marker(location=[lat, lon], icon=folium.Icon(color='green')).add_to(m)
-
-# Display the map
-m.save("map.html")
-
+# lat,lon: are the original lat and lon calculated by the rover (the collar)
+# lat_mod, lon_mod: are the fixes with the correction_projection algorithm 
+for correction in corrections:
+    print(f'Original lat: {correction['lat']}  - Fixed lat: {correction['lat_mod']}')
+    print(f'Original lon: {correction['lon']}  - Fixed lon: {correction['lon_mod']}')
+    print("-" * 30)

@@ -9,7 +9,7 @@ from models import LatLonAltCoord
 
 
 class DGNSSCP:
-    def __init__(self, fixed_base_coords: LatLonAltCoord):
+    def __init__(self, fixed_base_coords):
         """
         Initialize the DGNSSCP class with fixed base coordinates and navigation file.
 
@@ -98,7 +98,7 @@ class DGNSSCP:
                     prc = prc_data["prcs"][prn]
                     p_corrected = p_observed + prc
                 except KeyError:
-                    print(f"PRC for PRN {prn} not found.")
+                    #print(f"PRC for PRN {prn} not found.")
                     p_corrected = p_observed
 
                 satellite_data.append((x_sat, y_sat, z_sat, p_corrected))
@@ -112,30 +112,36 @@ class DGNSSCP:
             DeltaP = np.zeros(num_satellites)
 
             # Iterative least squares solution
-            for _ in range(20):
+            for _ in range(20): # 20 iterations, change it later using another stop criteria
                 for j, (x_sat, y_sat, z_sat, pseudorange) in enumerate(satellite_data):
+                    # Function 
                     p = math.sqrt(
                         (x_sat - x_mod) ** 2 +
                         (y_sat - y_mod) ** 2 +
                         (z_sat - z_mod) ** 2
                     ) + tau_mod
 
-                    #H, which is the design matrix
-                    # stores partial derivatives of the pseudorange equations with respect 
-                    # to the unknowns (x, y, z)
+                    # H, which is the design matrix (Jacobian of p regarding x, y, z and tau)
                     H[j] = np.array([
-                        (x_mod - x_sat) / p,
-                        (y_mod - y_sat) / p,
-                        (z_mod - z_sat) / p,
+                        -1 * (x_mod - x_sat) / p,
+                        -1 * (y_mod - y_sat) / p,
+                        -1 * (z_mod - z_sat) / p,
                         299792458  # Speed of light in m/s
                     ]) 
 
                     DeltaP[j] = pseudorange - p #  store the differences between measured and predicted pseudoranges
 
-                # Compute correction using least squares
-                HtH = H.T @ H
+                # Normal equations of least squares are:
+                # A.T * A * x = A.T * b     - A.T is A trasposed - 
+                # In this case:
+                #   A = H
+                #   X = DeltaX 
+                #   b = DeltaP
+
+                # The idea is then to find B * z = Y (With B = H^T * H and y = H.T * DeltaP)
+                HtH = H.T @ H # Multiply H^t by H
+
                 HtH_inv = np.linalg.pinv(HtH) # Pseudo inverse is being used bc the HtH matrix is poorly conditioned
-                #HtH_inv = np.linalg.pinv(HtH) # Pseudo inverse is being used bc the HtH matrix is poorly conditioned
 
                 HtDeltaP = H.T @ DeltaP
                 DeltaX = HtH_inv @ HtDeltaP
@@ -164,7 +170,7 @@ class DGNSSCP:
                 "lat_mod": lat_mod,
                 "lon_mod": lon_mod
             })
-        return 
+        return corrected_gnss
 
 
     def calculate_prcs(self, rtcm_message, datetime_timestamp):
@@ -224,11 +230,7 @@ class DGNSSCP:
         :return: Estimated total range in meters.
         """
         # Convert base station geodetic coordinates to ECEF
-        x_base, y_base, z_base = geodetic_to_ecef(
-            self.fixed_base_coords.lat,
-            self.fixed_base_coords.lon,
-            self.fixed_base_coords.alt
-        )
+        x_base, y_base, z_base = geodetic_to_ecef(*self.fixed_base_coords)
 
         base_ecef = np.array([x_base, y_base, z_base])
         satellite_ecef = np.array(sat_ecef[prn])
@@ -248,11 +250,7 @@ class DGNSSCP:
         :return: Pseudorange correction value.
         """
         # Known base station ECEF coordinates
-        x_known, y_known, z_known = geodetic_to_ecef(
-            self.fixed_base_coords.lat,
-            self.fixed_base_coords.lon,
-            self.fixed_base_coords.alt
-        )
+        x_known, y_known, z_known = geodetic_to_ecef(*self.fixed_base_coords)
 
         x_sat, y_sat, z_sat = sat_ecef[prn]
 
