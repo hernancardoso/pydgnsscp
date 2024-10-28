@@ -55,6 +55,7 @@ class DGNSSCP:
         :param reports: List of dictionaries containing report data from devices.
         """
         corrected_gnss = []
+        # For each satellite used in the fix, reconstruct the observed pseudorange and apply correction
         for report in reports:
             satellite_data = []
             num_satellites = len(report["sat"])
@@ -78,7 +79,6 @@ class DGNSSCP:
             # Find the closest PRC data to the report timestamp
             prc_data = find_closest_timestamp(timestamp, self.prcs_history)
 
-            # For each satellite used in the fix, reconstruct the observed pseudorange and apply correction
             for prn in report["sat"]:
                 try:
                     x_sat, y_sat, z_sat = sat_ecef[prn]
@@ -197,8 +197,9 @@ class DGNSSCP:
                     sat_ecef, prn
                 )
 
+                # 299792.458 speed of light in meters per millisecond
                 # Compute number of whole milliseconds
-                N = int(round((approximate_total_range - pseudorange_raw) / 299792.458))
+                N = int(round((approximate_total_range - pseudorange_raw) / 299792.458 ))
 
                 # Compute full pseudorange
                 pseudorange_full = pseudorange_raw + N * 299792.458  # In meters
